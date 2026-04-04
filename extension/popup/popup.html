@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { width: 280px; background: #030308; font-family: 'Inter', system-ui, sans-serif; color: white; }
+    .header { padding: 14px 16px; background: rgba(34,211,238,0.05); border-bottom: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; gap: 10px; }
+    .avatar { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, #0891b2, #7c3aed); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 12px; box-shadow: 0 0 16px rgba(34,211,238,0.3); }
+    .title { font-weight: 700; font-size: 13px; letter-spacing: -0.3px; }
+    .subtitle { color: #10b981; font-size: 10px; }
+    .body { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .stat-row { display: flex; gap: 8px; }
+    .stat { flex: 1; background: rgba(15,15,30,0.9); border-radius: 10px; padding: 11px; text-align: center; border: 1px solid rgba(255,255,255,0.06); }
+    .stat-num { font-size: 20px; font-weight: 800; }
+    .stat-label { color: rgba(255,255,255,0.3); font-size: 9px; margin-top: 2px; }
+    .warning-box { background: rgba(15,15,30,0.9); border-radius: 8px; padding: 10px 12px; border: 1px solid rgba(255,255,255,0.06); font-size: 11px; color: rgba(255,255,255,0.4); min-height: 44px; line-height: 1.5; }
+    .open-btn { width: 100%; padding: 10px; background: linear-gradient(135deg, #0891b2, #7c3aed); border: none; border-radius: 9px; color: white; font-weight: 700; font-size: 12px; cursor: pointer; box-shadow: 0 0 16px rgba(34,211,238,0.2); }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: #10b981; box-shadow: 0 0 6px #10b981; display: inline-block; margin-right: 4px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="avatar">N</div>
+    <div>
+      <div class="title">NeuroClone</div>
+      <div class="subtitle"><span class="dot"></span>Focus Guard Active</div>
+    </div>
+  </div>
+  <div class="body">
+    <div class="stat-row">
+      <div class="stat">
+        <div class="stat-num" id="distCount" style="color:#ef4444">0</div>
+        <div class="stat-label">Distractions</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num" id="focusCount" style="color:#10b981">0</div>
+        <div class="stat-label">Focus Hits</div>
+      </div>
+    </div>
+    <div class="warning-box" id="lastWarning">No warnings yet. Stay focused.</div>
+    <button class="open-btn" onclick="chrome.tabs.create({url:'http://localhost:5173'})">Open NeuroClone Dashboard</button>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

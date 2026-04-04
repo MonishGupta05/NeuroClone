@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "NeuroClone — Focus Guard",
+  "version": "1.0",
+  "description": "Your personal AI clone watching your tabs so you stay on track.",
+  "permissions": ["tabs", "activeTab", "storage", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background/service_worker.js" },
+  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content_scripts/monitor.js"], "run_at": "document_end" }],
+  "action": { "default_popup": "popup/popup.html", "default_title": "NeuroClone" }
+}
