@@ -1,4 +1,4 @@
-const BACKEND = "http://localhost:8000/api/v1";
+const BACKEND = "https://neuroclone.onrender.com/api/v1";
 
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   try {
