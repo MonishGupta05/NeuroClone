@@ -8,6 +8,8 @@ from routes.permission import router as permission_router
 from routes.analytics import router as analytics_router
 from routes.reflection import router as reflection_router
 from routes.tasks import router as tasks_router
+from routes.brain import router as brain_router
+from routes.streaks import router as streaks_router
 
 app = FastAPI(title="NeuroClone Backend")
 
@@ -27,6 +29,8 @@ app.include_router(permission_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(reflection_router, prefix="/api/v1")
 app.include_router(tasks_router, prefix="/api/v1")
+app.include_router(brain_router, prefix="/api/v1")
+app.include_router(streaks_router, prefix="/api/v1")
 
 @app.get("/")
 def root():

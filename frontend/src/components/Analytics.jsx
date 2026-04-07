@@ -32,30 +32,54 @@ const GlassCard = ({ children, style = {}, delay = 0 }) => (
   <motion.div
     initial={{ opacity: 0, y: 10 }}
     animate={{ opacity: 1, y: 0 }}
-    transition={{ duration: 0.5, delay, ease: [0.16, 1, 0.3, 1] }}
+    transition={{ duration: 0.45, delay, ease: [0.16, 1, 0.3, 1] }}
     style={{
-      background: "rgba(15,15,30,0.7)",
+      background: "rgba(15,15,30,0.75)",
       border: "1px solid var(--border-bright)",
       borderRadius: "12px", padding: "14px",
       backdropFilter: "blur(10px)",
-      boxShadow: "0 4px 24px rgba(0,0,0,0.3)",
+      boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
       ...style
     }}
   >{children}</motion.div>
 );
 
-const Label = ({ children }) => (
-  <div style={{ fontSize: "9px", color: "var(--text-muted)", fontWeight: "700", letterSpacing: "1.2px", textTransform: "uppercase", marginBottom: "10px" }}>
-    {children}
-  </div>
-);
-
 export default function Analytics() {
   const [data, setData] = useState(null);
-  const load = async () => { try { const r = await getAnalytics(); setData(r.data); } catch {} };
-  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, []);
+  const [loading, setLoading] = useState(true);
 
-  if (!data) return <div style={{ color: "var(--text-muted)", fontSize: "12px", padding: "40px", textAlign: "center" }}>Loading analytics...</div>;
+  const load = async () => {
+    try {
+      setLoading(true);
+      const r = await getAnalytics();
+      setData(r.data);
+    } catch {}
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); const t = setInterval(load, 20000); return () => clearInterval(t); }, []);
+
+  if (loading && !data) return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+      <div style={{ fontSize: "12px", fontWeight: "700", color: "var(--text-primary)" }}>📈 Analytics</div>
+      {[1, 2, 3].map(i => (
+        <div key={i} style={{
+          background: "rgba(15,15,30,0.5)", border: "1px solid var(--border)",
+          borderRadius: "12px", height: `${60 + i * 20}px`,
+          backgroundImage: "linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.03) 75%)",
+          backgroundSize: "400px 100%",
+          animation: "shimmer-line 2s infinite"
+        }} />
+      ))}
+    </div>
+  );
+
+  if (!data) return (
+    <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--text-muted)" }}>
+      <div style={{ fontSize: "28px", marginBottom: "8px" }}>📊</div>
+      <div style={{ fontSize: "12px" }}>No data yet. Browse some sites to start tracking.</div>
+    </div>
+  );
 
   const maxWeek = Math.max(...data.weekly_trend.map(d => d.distractions + d.focus), 1);
 
@@ -63,11 +87,12 @@ export default function Analytics() {
     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ fontSize: "12px", fontWeight: "700", color: "var(--text-primary)" }}>📈 Analytics</div>
-        <motion.button whileHover={{ scale: 1.05 }} onClick={load} style={{
-          background: "rgba(34,211,238,0.06)", border: "1px solid rgba(34,211,238,0.15)",
-          borderRadius: "5px", padding: "3px 9px",
-          color: "var(--cyan)", fontSize: "9px", cursor: "pointer", fontFamily: "'Inter', sans-serif"
-        }}>↻ Refresh</motion.button>
+        <motion.button whileHover={{ scale: 1.05 }} onClick={load}
+          style={{
+            background: "rgba(34,211,238,0.06)", border: "1px solid rgba(34,211,238,0.15)",
+            borderRadius: "5px", padding: "3px 9px", color: "var(--cyan)",
+            fontSize: "9px", cursor: "pointer", fontFamily: "'Inter', sans-serif"
+          }}>↻ Refresh</motion.button>
       </div>
 
       <GlassCard style={{ display: "flex", gap: "12px", alignItems: "center" }}>
@@ -89,14 +114,26 @@ export default function Analytics() {
         </div>
       </GlassCard>
 
+      {data.today.total_sites === 0 && (
+        <GlassCard style={{ textAlign: "center", padding: "20px" }}>
+          <div style={{ fontSize: "20px", marginBottom: "6px" }}>🔍</div>
+          <div style={{ fontSize: "11px", color: "var(--text-muted)", lineHeight: "1.6" }}>
+            No browser activity yet today.<br />
+            Install the Chrome extension to start tracking.
+          </div>
+        </GlassCard>
+      )}
+
       <GlassCard delay={0.1}>
-        <Label>7-Day Activity</Label>
+        <div style={{ fontSize: "9px", color: "var(--text-muted)", marginBottom: "10px", fontWeight: "700", letterSpacing: "1px", textTransform: "uppercase" }}>
+          7-Day Activity
+        </div>
         <div style={{ display: "flex", gap: "5px", alignItems: "flex-end", height: "64px" }}>
           {data.weekly_trend.map((d, i) => {
             const total = d.distractions + d.focus;
             const h = Math.max((total / maxWeek) * 54, 4);
             const pct = total === 0 ? 50 : (d.focus / total) * 100;
-            const color = pct >= 70 ? "#10b981" : pct >= 40 ? "#f59e0b" : "#ef4444";
+            const color = pct >= 70 ? "#10b981" : pct >= 40 ? "#f59e0b" : total === 0 ? "#222" : "#ef4444";
             return (
               <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
                 <motion.div
@@ -104,8 +141,8 @@ export default function Analytics() {
                   transition={{ duration: 0.8, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
                   style={{
                     width: "100%", borderRadius: "3px 3px 0 0",
-                    background: `linear-gradient(180deg, ${color}, ${color}55)`,
-                    boxShadow: `0 0 10px ${color}40`
+                    background: total === 0 ? "rgba(255,255,255,0.04)" : `linear-gradient(180deg, ${color}, ${color}66)`,
+                    boxShadow: total > 0 ? `0 0 10px ${color}40` : "none"
                   }}
                 />
                 <div style={{ fontSize: "8px", color: "var(--text-muted)", fontWeight: "700" }}>{d.day}</div>
@@ -115,9 +152,11 @@ export default function Analytics() {
         </div>
       </GlassCard>
 
-      {data.top_distractions.length > 0 && (
+      {data.top_distractions.length > 0 ? (
         <GlassCard delay={0.2}>
-          <Label>Top Distractions</Label>
+          <div style={{ fontSize: "9px", color: "var(--text-muted)", marginBottom: "10px", fontWeight: "700", letterSpacing: "1px", textTransform: "uppercase" }}>
+            Top Distractions
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             {data.top_distractions.map((d, i) => {
               const pct = Math.round((d.count / data.top_distractions[0].count) * 100);
@@ -143,6 +182,12 @@ export default function Analytics() {
             })}
           </div>
         </GlassCard>
+      ) : (
+        <GlassCard delay={0.2} style={{ textAlign: "center" }}>
+          <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+            🎯 No distractions tracked yet. Clean start bhai.
+          </div>
+        </GlassCard>
       )}
 
       <GlassCard delay={0.3} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -151,9 +196,9 @@ export default function Analytics() {
           <div style={{ fontSize: "9px", color: "var(--text-muted)" }}>Total memories</div>
         </div>
         <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {Object.entries(data.memory_stats).map(([type, count]) => (
+          {Object.entries(data.memory_stats).filter(([, count]) => count > 0).map(([type, count]) => (
             <div key={type} style={{
-              background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.2)",
+              background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.18)",
               borderRadius: "99px", padding: "2px 7px",
               fontSize: "9px", color: "var(--cyan)", fontWeight: "700"
             }}>{type} {count}</div>

@@ -1,6 +1,11 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { sendMessage, sendCorrection, summarizeSession, detectLaunchIntent, detectTask, generateImage, searchImages } from "../api/client";
+import { useToast } from "./Toast";
+import {
+  sendMessage, sendCorrection, summarizeSession,
+  detectLaunchIntent, detectTask, generateImage,
+  searchImages, searchBrain
+} from "../api/client";
 
 const emotionConfig = {
   tired:      { label: "😴 Tired",      color: "#f59e0b", bg: "rgba(245,158,11,0.08)" },
@@ -11,108 +16,200 @@ const emotionConfig = {
   confused:   { label: "🤔 Confused",   color: "#a855f7", bg: "rgba(168,85,247,0.08)" },
 };
 
-function ImageMessage({ data }) {
-  const handleDownload = (url, name) => {
-    const a = document.createElement("a");
-    a.href = url; a.download = name || "neuroclone-image.jpg";
-    a.target = "_blank"; a.click();
+const STORAGE_KEY = "neuroclone_chat_v2";
+
+function ImageCard({ data, onRetry }) {
+  const [imgError, setImgError] = useState(false);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [fallbackIndex, setFallbackIndex] = useState(0);
+  const [downloading, setDownloading] = useState(false);
+  const toast = useToast();
+
+  const currentUrl = fallbackIndex === 0
+    ? data.url
+    : (data.fallback_urls?.[fallbackIndex - 1] || data.url);
+
+  const handleError = () => {
+    if (fallbackIndex < (data.fallback_urls?.length || 0)) {
+      setFallbackIndex(f => f + 1);
+      setImgLoaded(false);
+    } else {
+      setImgError(true);
+    }
   };
 
-  if (data.type === "ai_image") {
-    return (
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        style={{ maxWidth: "280px" }}
-      >
-        <div style={{
-          fontSize: "9px", color: "var(--text-muted)", marginBottom: "6px",
-          fontWeight: "700", letterSpacing: "1px", textTransform: "uppercase"
-        }}>NeuroClone — AI Generated</div>
-        <div style={{
-          borderRadius: "12px", overflow: "hidden",
-          border: "1px solid rgba(34,211,238,0.2)",
-          boxShadow: "0 0 30px rgba(34,211,238,0.1)"
-        }}>
-          <img
-            src={data.url} alt={data.prompt}
-            style={{ width: "100%", display: "block" }}
-            onError={(e) => { e.target.style.display = "none"; }}
-          />
-        </div>
-        <div style={{ marginTop: "8px", display: "flex", gap: "6px" }}>
-          <button
-            onClick={() => handleDownload(data.url, `${data.prompt}.jpg`)}
-            style={{
-              flex: 1, padding: "6px", borderRadius: "7px",
-              background: "linear-gradient(135deg, #0891b2, #7c3aed)",
-              border: "none", color: "white", fontSize: "11px",
-              fontWeight: "700", cursor: "pointer", fontFamily: "'Inter', sans-serif"
-            }}
-          >⬇ Download</button>
-          <button
-            onClick={() => window.open(data.url, "_blank")}
-            style={{
-              padding: "6px 10px", borderRadius: "7px",
-              background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-bright)",
-              color: "var(--text-secondary)", fontSize: "11px", cursor: "pointer",
-              fontFamily: "'Inter', sans-serif"
-            }}
-          >↗</button>
-        </div>
-        <div style={{ fontSize: "9px", color: "var(--text-muted)", marginTop: "4px" }}>
-          Source: {data.source}
-        </div>
-      </motion.div>
-    );
-  }
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const res = await fetch(currentUrl);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `neuroclone-${(data.prompt || "image").replace(/\s+/g, "-").slice(0, 30)}.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("Image downloaded!", 2000);
+    } catch {
+      window.open(currentUrl, "_blank");
+      toast.info("Opened in new tab instead", 2000);
+    }
+    setDownloading(false);
+  };
 
-  if (data.type === "image_search") {
-    return (
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} style={{ maxWidth: "320px" }}>
-        <div style={{ fontSize: "9px", color: "var(--text-muted)", marginBottom: "8px", fontWeight: "700", letterSpacing: "1px", textTransform: "uppercase" }}>
-          NeuroClone — Found {data.images.length} images
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "4px", borderRadius: "10px", overflow: "hidden" }}>
-          {data.images.slice(0, 6).map((img, i) => (
-            <div key={i} style={{ position: "relative", aspectRatio: "1", overflow: "hidden", cursor: "pointer" }}
-              onClick={() => handleDownload(img.url, `${data.query}-${i + 1}.jpg`)}>
-              <img src={img.url} alt={img.prompt} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              <div style={{
-                position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                opacity: 0, transition: "opacity 0.2s",
-                fontSize: "16px"
-              }}
-                onMouseEnter={e => e.currentTarget.style.opacity = 1}
-                onMouseLeave={e => e.currentTarget.style.opacity = 0}
-              >⬇</div>
+  if (data.type === "image_search") return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} style={{ maxWidth: "300px" }}>
+      <div style={{ fontSize: "9px", color: "var(--cyan)", fontWeight: "700", letterSpacing: "1px", marginBottom: "8px", textTransform: "uppercase" }}>
+        🔍 {data.images?.length || 0} images found · {data.source}
+      </div>
+      <div style={{
+        display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "3px",
+        borderRadius: "12px", overflow: "hidden",
+        border: "1px solid rgba(34,211,238,0.15)"
+      }}>
+        {(data.images || []).slice(0, 9).map((img, i) => (
+          <div key={i} style={{ position: "relative", aspectRatio: "1", overflow: "hidden", cursor: "pointer" }}
+            onClick={() => window.open(img.url, "_blank")}>
+            <img src={img.url} alt="" loading="lazy"
+              style={{ width: "100%", height: "100%", objectFit: "cover", transition: "transform 0.2s" }}
+              onMouseEnter={e => e.target.style.transform = "scale(1.1)"}
+              onMouseLeave={e => e.target.style.transform = "scale(1)"}
+              onError={e => { e.target.style.display = "none"; }}
+            />
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: "9px", color: "var(--text-muted)", marginTop: "5px" }}>Click any to open full size</div>
+    </motion.div>
+  );
+
+  return (
+    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} style={{ maxWidth: "280px" }}>
+      <div style={{ fontSize: "9px", color: "var(--cyan)", fontWeight: "700", letterSpacing: "1px", marginBottom: "6px", textTransform: "uppercase" }}>
+        ✨ AI Generated · {data.source}
+      </div>
+
+      <div style={{
+        borderRadius: "12px", overflow: "hidden",
+        border: "1px solid rgba(34,211,238,0.2)",
+        boxShadow: "0 0 30px rgba(34,211,238,0.08)",
+        background: "rgba(15,15,30,0.8)", minHeight: "180px", position: "relative"
+      }}>
+        {!imgLoaded && !imgError && (
+          <div style={{
+            position: "absolute", inset: 0, display: "flex",
+            flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "10px"
+          }}>
+            <div style={{ display: "flex", gap: "5px" }}>
+              {[0, 1, 2].map(i => (
+                <motion.div key={i}
+                  animate={{ y: [0, -6, 0] }}
+                  transition={{ duration: 0.6, delay: i * 0.15, repeat: Infinity }}
+                  style={{ width: "5px", height: "5px", borderRadius: "50%", background: "var(--cyan)" }}
+                />
+              ))}
             </div>
-          ))}
-        </div>
-        <div style={{ fontSize: "9px", color: "var(--text-muted)", marginTop: "6px" }}>
-          Click any image to download · Source: {data.source}
-        </div>
-      </motion.div>
-    );
-  }
+            <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>Rendering image...</div>
+            <div style={{ fontSize: "9px", color: "var(--text-muted)", opacity: 0.6 }}>This takes 5-10 seconds</div>
+          </div>
+        )}
 
-  return null;
+        {imgError ? (
+          <div style={{
+            padding: "30px 20px", textAlign: "center",
+            display: "flex", flexDirection: "column", alignItems: "center", gap: "10px"
+          }}>
+            <div style={{ fontSize: "24px" }}>🔄</div>
+            <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Image failed to render</div>
+            <motion.button onClick={onRetry} whileHover={{ scale: 1.04 }}
+              style={{
+                padding: "6px 14px", borderRadius: "7px",
+                background: "linear-gradient(135deg, #0891b2, #7c3aed)",
+                border: "none", color: "white", fontSize: "11px",
+                fontWeight: "700", cursor: "pointer", fontFamily: "'Inter', sans-serif"
+              }}>Try Again</motion.button>
+          </div>
+        ) : (
+          <img src={currentUrl} alt={data.prompt}
+            onLoad={() => setImgLoaded(true)}
+            onError={handleError}
+            style={{
+              width: "100%", display: "block",
+              opacity: imgLoaded ? 1 : 0,
+              transition: "opacity 0.6s ease"
+            }}
+          />
+        )}
+      </div>
+
+      {!imgError && imgLoaded && (
+        <>
+          <div style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "6px", fontStyle: "italic" }}>
+            "{data.prompt}"
+          </div>
+          <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
+            <motion.button onClick={handleDownload} disabled={downloading}
+              whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+              style={{
+                flex: 1, padding: "7px", borderRadius: "8px",
+                background: "linear-gradient(135deg, #0891b2, #7c3aed)",
+                border: "none", color: "white", fontSize: "11px", fontWeight: "700",
+                cursor: "pointer", fontFamily: "'Inter', sans-serif",
+                boxShadow: "0 0 16px rgba(34,211,238,0.2)"
+              }}
+            >{downloading ? "⏳" : "⬇ Download"}</motion.button>
+            <motion.button onClick={() => window.open(currentUrl, "_blank")}
+              whileHover={{ scale: 1.03 }}
+              style={{
+                padding: "7px 10px", borderRadius: "8px",
+                background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-bright)",
+                color: "var(--text-secondary)", fontSize: "11px", cursor: "pointer",
+                fontFamily: "'Inter', sans-serif"
+              }}>↗</motion.button>
+            <motion.button onClick={onRetry} whileHover={{ scale: 1.03 }}
+              title="Generate new variation"
+              style={{
+                padding: "7px 10px", borderRadius: "8px",
+                background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-bright)",
+                color: "var(--text-secondary)", fontSize: "11px", cursor: "pointer",
+                fontFamily: "'Inter', sans-serif"
+              }}>🔄</motion.button>
+          </div>
+        </>
+      )}
+    </motion.div>
+  );
 }
 
 export default function ChatPanel() {
-  const [messages, setMessages] = useState([
-    { role: "ai", text: "Bhai, I'm you. Ask me anything, give me a task, or tell me what's going on." }
-  ]);
+  const [messages, setMessages] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) return JSON.parse(saved).filter(m => m.role !== "image").slice(-40);
+    } catch {}
+    return [{ role: "ai", text: "Bhai, I'm you. Chat, give commands, generate images, open sites, search your brain — all from here." }];
+  });
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
+  const [muted, setMuted] = useState(false);
   const [correcting, setCorrecting] = useState(null);
   const [emotion, setEmotion] = useState("neutral");
   const [inputFocused, setInputFocused] = useState(false);
+  const [lastImagePrompt, setLastImagePrompt] = useState("");
   const bottomRef = useRef(null);
+  const toast = useToast();
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+  useEffect(() => {
+    try {
+      const toSave = messages.filter(m => m.role !== "image").slice(-50);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    } catch {}
+  }, [messages]);
 
   const detectEmotionLocally = (msg) => {
     const m = msg.toLowerCase();
@@ -130,83 +227,117 @@ export default function ChatPanel() {
     return "neutral";
   };
 
+  const speakResponse = useCallback((text) => {
+    if (muted) return;
+    window.speechSynthesis.cancel();
+    const clean = text.replace(/[#*`_~]/g, "").slice(0, 220);
+    const u = new SpeechSynthesisUtterance(clean);
+    u.lang = "en-IN"; u.rate = 1.05; u.pitch = 1;
+    window.speechSynthesis.speak(u);
+  }, [muted]);
+
   const handleVoice = () => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { alert("Use Chrome."); return; }
+    if (!SR) { toast.error("Use Chrome for voice support."); return; }
     const r = new SR();
     r.lang = "en-IN"; r.interimResults = false;
     r.onstart = () => setListening(true);
     r.onend = () => setListening(false);
+    r.onerror = () => { setListening(false); toast.error("Voice input failed. Try again."); };
     r.onresult = (e) => setInput(e.results[0][0].transcript);
     r.start();
+    toast.info("Listening... speak now", 2500);
   };
 
-  const speakResponse = (text) => {
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "en-IN"; u.rate = 1.05; u.pitch = 1;
-    window.speechSynthesis.speak(u);
+  const generateAndShowImage = async (prompt) => {
+    setLastImagePrompt(prompt);
+    setMessages(p => [...p, { role: "ai", text: `Generating "${prompt}"... rendering below 👇` }]);
+    try {
+      const imgRes = await generateImage(prompt);
+      setMessages(p => [...p, { role: "image", data: imgRes.data }]);
+    } catch {
+      toast.error("Image generation failed. Try again.");
+      setMessages(p => [...p, { role: "ai", text: "Image generation failed bhai. Try a different description or try again." }]);
+    }
+  };
+
+  const handleRetryImage = async () => {
+    if (!lastImagePrompt) return;
+    toast.info("Generating new variation...", 2000);
+    setMessages(p => [...p, { role: "ai", text: "Generating a new variation..." }]);
+    try {
+      const imgRes = await generateImage(lastImagePrompt);
+      setMessages(p => [...p, { role: "image", data: imgRes.data }]);
+    } catch {
+      toast.error("Still failing. Try a different prompt.");
+    }
   };
 
   const handleSend = async () => {
-    if (!input.trim()) return;
     const userMsg = input.trim();
+    if (!userMsg || loading) return;
     setInput("");
     const updated = [...messages, { role: "user", text: userMsg }];
     setMessages(updated);
     setLoading(true);
     setEmotion(detectEmotionLocally(userMsg));
+    const msgLower = userMsg.toLowerCase();
 
-    // 1. Check task intent (image gen / image search)
+    // 1. Second brain search
+    if (
+      msgLower.includes("what did i") ||
+      msgLower.includes("do i know") ||
+      msgLower.includes("have i said") ||
+      msgLower.includes("search my brain") ||
+      msgLower.includes("what do you know about me")
+    ) {
+      try {
+        const res = await searchBrain(userMsg);
+        setMessages(p => [...p, { role: "ai", text: res.data.answer }]);
+        speakResponse(res.data.answer);
+      } catch { setMessages(p => [...p, { role: "ai", text: "Brain search failed. Check backend." }]); }
+      setLoading(false); return;
+    }
+
+    // 2. Task detection (images)
     try {
       const taskRes = await detectTask(userMsg);
       const task = taskRes.data;
 
       if (task.detected && task.type === "generate_image") {
-        const ok = window.confirm(`NeuroClone wants to generate an AI image of:\n\n"${task.subject}"\n\nUsing Pollinations AI (free). Allow?`);
-        if (ok) {
-          setMessages(p => [...p, { role: "ai", text: `Generating AI image of "${task.subject}"... give it a few seconds bhai.` }]);
-          const imgRes = await generateImage(task.subject);
-          setMessages(p => [...p, { role: "image", data: imgRes.data }]);
-        } else {
-          setMessages(p => [...p, { role: "ai", text: "Okay, not generating it." }]);
-        }
         setLoading(false);
+        await generateAndShowImage(task.subject);
         return;
       }
 
       if (task.detected && task.type === "search_image") {
-        const ok = window.confirm(`NeuroClone wants to search and download images of:\n\n"${task.subject}"\n\nAllow?`);
-        if (ok) {
-          setMessages(p => [...p, { role: "ai", text: `Searching images of "${task.subject}"...` }]);
+        setMessages(p => [...p, { role: "ai", text: `Searching images of "${task.subject}"...` }]);
+        try {
           const imgRes = await searchImages(task.subject);
           setMessages(p => [...p, { role: "image", data: imgRes.data }]);
-        } else {
-          setMessages(p => [...p, { role: "ai", text: "Okay, not searching." }]);
-        }
-        setLoading(false);
-        return;
+        } catch { toast.error("Image search failed."); }
+        setLoading(false); return;
       }
     } catch {}
 
-    // 2. Check browser launch intent
+    // 3. Browser launch
     try {
       const intentRes = await detectLaunchIntent(userMsg);
       const intent = intentRes.data;
       if (intent.detected) {
-        const ok = window.confirm(`NeuroClone wants to:\n\n${intent.description}\n\nAllow?`);
+        const ok = await toast.confirm(`Open ${intent.description}?`);
         if (ok) {
           window.open(intent.url, "_blank");
           setMessages(p => [...p, { role: "ai", text: `Done. Opening ${intent.description}. Stay focused bhai.` }]);
+          toast.success(`Opened ${intent.url}`, 2000);
         } else {
-          setMessages(p => [...p, { role: "ai", text: "Okay, not opening it." }]);
+          setMessages(p => [...p, { role: "ai", text: "Okay, not opening it. Good call." }]);
         }
-        setLoading(false);
-        return;
+        setLoading(false); return;
       }
     } catch {}
 
-    // 3. Normal chat
+    // 4. Normal chat
     const history = updated.slice(-10)
       .map(m => `${m.role === "user" ? "Monish" : "AI"}: ${m.text || "[image]"}`).join("\n");
 
@@ -216,107 +347,125 @@ export default function ChatPanel() {
       setMessages(p => [...p, { role: "ai", text: aiText }]);
       speakResponse(aiText);
     } catch {
-      setMessages(p => [...p, { role: "ai", text: "Backend down. Check uvicorn." }]);
+      toast.error("Backend down. Restart uvicorn.");
+      setMessages(p => [...p, { role: "ai", text: "Backend down. Check if uvicorn is running." }]);
     }
     setLoading(false);
   };
 
   const handleCorrect = async (i) => {
-    const c = prompt("What should I have said instead?");
-    if (!c) return;
-    await sendCorrection(c);
+    const correction = prompt("What should I have said instead?");
+    if (!correction) return;
+    await sendCorrection(correction);
+    toast.success("Correction saved to memory.", 2000);
     setCorrecting(i);
     setTimeout(() => setCorrecting(null), 2000);
   };
 
   const handleSummarize = async () => {
-    if (messages.length < 3) return;
+    if (messages.length < 3) { toast.warning("Chat more first before saving.", 2000); return; }
     const conv = messages.map(m => `${m.role === "user" ? "Monish" : "AI"}: ${m.text || "[image]"}`).join("\n");
-    const res = await summarizeSession(conv);
-    alert(`Session saved:\n\n${res.data.summary}`);
+    try {
+      const res = await summarizeSession(conv);
+      toast.success(`Session saved: ${res.data.summary.slice(0, 80)}...`, 6000);
+    } catch { toast.error("Failed to save session."); }
+  };
+
+  const clearChat = async () => {
+    const ok = await toast.confirm("Clear chat history?");
+    if (ok) {
+      setMessages([{ role: "ai", text: "Fresh start bhai. What's on your mind?" }]);
+      localStorage.removeItem(STORAGE_KEY);
+      toast.success("Chat cleared.", 2000);
+    }
   };
 
   return (
     <div style={{
       display: "flex", flexDirection: "column", height: "100%",
-      background: "rgba(10,10,21,0.85)",
-      borderRadius: "16px",
-      border: "1px solid var(--border-bright)",
-      overflow: "hidden",
+      background: "rgba(10,10,21,0.88)", borderRadius: "16px",
+      border: "1px solid var(--border-bright)", overflow: "hidden",
       backdropFilter: "blur(20px)",
-      boxShadow: "0 0 0 1px rgba(255,255,255,0.03), 0 24px 64px rgba(0,0,0,0.6), 0 0 60px rgba(34,211,238,0.03)"
+      boxShadow: "0 0 0 1px rgba(255,255,255,0.03), 0 24px 64px rgba(0,0,0,0.6)"
     }}>
 
       {/* Header */}
       <div style={{
-        padding: "12px 16px",
+        padding: "11px 14px",
         background: "linear-gradient(135deg, rgba(34,211,238,0.06), rgba(168,85,247,0.04))",
         borderBottom: "1px solid var(--border)",
-        display: "flex", alignItems: "center", gap: "10px"
+        display: "flex", alignItems: "center", gap: "10px", flexShrink: 0
       }}>
         <div style={{ position: "relative" }}>
           <div style={{
-            width: "36px", height: "36px", borderRadius: "10px",
+            width: "34px", height: "34px", borderRadius: "10px",
             background: "linear-gradient(135deg, #0891b2, #7c3aed)",
             display: "flex", alignItems: "center", justifyContent: "center",
-            fontWeight: "800", fontSize: "14px", color: "white",
-            boxShadow: "0 0 20px rgba(34,211,238,0.4), inset 0 1px 0 rgba(255,255,255,0.2)"
+            fontWeight: "800", fontSize: "13px", color: "white",
+            boxShadow: "0 0 18px rgba(34,211,238,0.35)"
           }}>N</div>
           <motion.div
-            animate={{ scale: [1, 1.3, 1] }}
-            transition={{ duration: 2, repeat: Infinity }}
+            animate={{ scale: [1, 1.5, 1] }}
+            transition={{ duration: 3, repeat: Infinity }}
             style={{
-              position: "absolute", bottom: "0", right: "0",
-              width: "9px", height: "9px", borderRadius: "50%",
+              position: "absolute", bottom: 0, right: 0,
+              width: "8px", height: "8px", borderRadius: "50%",
               background: "#10b981", border: "2px solid var(--bg-card)",
               boxShadow: "0 0 6px #10b981"
             }}
           />
         </div>
 
-        <div>
-          <div style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-primary)" }}>NeuroClone</div>
-          <div style={{ fontSize: "9px", color: "var(--text-muted)", letterSpacing: "0.3px" }}>
-            Your second self · Image gen · Browser control · Always watching
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: "12px", fontWeight: "700", color: "var(--text-primary)" }}>NeuroClone</div>
+          <div style={{ fontSize: "9px", color: "var(--text-muted)" }}>
+            Chat · Images · Browser · Memory · Voice
           </div>
         </div>
 
         <AnimatePresence>
           {emotion !== "neutral" && emotionConfig[emotion] && (
             <motion.div key={emotion}
-              initial={{ opacity: 0, scale: 0.7, x: -10 }}
-              animate={{ opacity: 1, scale: 1, x: 0 }}
+              initial={{ opacity: 0, scale: 0.7 }}
+              animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.7 }}
               style={{
-                padding: "3px 10px", borderRadius: "99px",
+                padding: "3px 9px", borderRadius: "99px",
                 background: emotionConfig[emotion].bg,
                 border: `1px solid ${emotionConfig[emotion].color}25`,
-                fontSize: "10px", fontWeight: "700", color: emotionConfig[emotion].color
+                fontSize: "10px", fontWeight: "700",
+                color: emotionConfig[emotion].color, flexShrink: 0
               }}
             >{emotionConfig[emotion].label}</motion.div>
           )}
         </AnimatePresence>
 
-        <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-          onClick={handleSummarize}
-          style={{
-            marginLeft: "auto", padding: "5px 12px", borderRadius: "7px",
-            background: "rgba(34,211,238,0.07)",
-            border: "1px solid rgba(34,211,238,0.2)",
-            color: "var(--cyan)", fontSize: "10px", fontWeight: "700",
-            cursor: "pointer", fontFamily: "'Inter', sans-serif"
-          }}
-        >💾 Save Session</motion.button>
+        <div style={{ display: "flex", gap: "4px", flexShrink: 0 }}>
+          <motion.button whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.94 }}
+            onClick={handleSummarize} title="Save session to memory"
+            style={{
+              padding: "5px 9px", borderRadius: "7px",
+              background: "rgba(34,211,238,0.07)", border: "1px solid rgba(34,211,238,0.2)",
+              color: "var(--cyan)", fontSize: "11px", cursor: "pointer"
+            }}>💾</motion.button>
+          <motion.button whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.94 }}
+            onClick={clearChat} title="Clear chat"
+            style={{
+              padding: "5px 9px", borderRadius: "7px",
+              background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.15)",
+              color: "#ef4444", fontSize: "11px", cursor: "pointer"
+            }}>🗑️</motion.button>
+        </div>
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "14px" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px", display: "flex", flexDirection: "column", gap: "12px" }}>
         <AnimatePresence initial={false}>
           {messages.map((msg, i) => (
             <motion.div key={i}
-              initial={{ opacity: 0, y: 10, scale: 0.98 }}
+              initial={{ opacity: 0, y: 8, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
               style={{
                 display: "flex", flexDirection: "column",
                 alignItems: msg.role === "user" ? "flex-end" : "flex-start"
@@ -324,32 +473,32 @@ export default function ChatPanel() {
             >
               {msg.role === "ai" && (
                 <div style={{
-                  fontSize: "9px", color: "var(--text-muted)", marginBottom: "4px",
+                  fontSize: "8px", color: "var(--text-muted)", marginBottom: "3px",
                   paddingLeft: "4px", fontWeight: "700", letterSpacing: "1px", textTransform: "uppercase"
                 }}>NeuroClone</div>
               )}
 
               {msg.role === "image" ? (
                 <div style={{ paddingLeft: "4px" }}>
-                  <ImageMessage data={msg.data} />
+                  <ImageCard data={msg.data} onRetry={handleRetryImage} />
                 </div>
               ) : (
-                <motion.div whileHover={{ scale: 1.005 }} style={{
-                  maxWidth: "78%", padding: "11px 15px",
+                <div style={{
+                  maxWidth: "80%", padding: "10px 14px",
                   borderRadius: msg.role === "user" ? "14px 14px 3px 14px" : "3px 14px 14px 14px",
                   background: msg.role === "user"
                     ? "linear-gradient(135deg, #0891b2, #7c3aed)"
-                    : "rgba(15,15,30,0.9)",
+                    : "rgba(15,15,30,0.92)",
                   color: "var(--text-primary)",
-                  fontSize: "13.5px", lineHeight: "1.65",
+                  fontSize: "13px", lineHeight: "1.65",
                   border: msg.role === "ai" ? "1px solid var(--border-bright)" : "none",
                   boxShadow: msg.role === "user"
-                    ? "0 4px 24px rgba(34,211,238,0.25), inset 0 1px 0 rgba(255,255,255,0.15)"
-                    : "0 2px 12px rgba(0,0,0,0.4)",
+                    ? "0 4px 20px rgba(34,211,238,0.2)"
+                    : "0 2px 10px rgba(0,0,0,0.4)",
                   backdropFilter: "blur(10px)"
                 }}>
                   {msg.text}
-                </motion.div>
+                </div>
               )}
 
               {(msg.role === "ai" || msg.role === "image") && (
@@ -369,25 +518,21 @@ export default function ChatPanel() {
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
             style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <div style={{
-              width: "30px", height: "30px", borderRadius: "8px",
+              width: "28px", height: "28px", borderRadius: "8px",
               background: "linear-gradient(135deg, #0891b2, #7c3aed)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: "12px", fontWeight: "800", color: "white"
+              fontSize: "11px", fontWeight: "800", color: "white"
             }}>N</div>
             <div style={{
               padding: "10px 14px", borderRadius: "3px 14px 14px 14px",
               background: "rgba(15,15,30,0.9)", border: "1px solid var(--border-bright)",
-              display: "flex", gap: "5px", alignItems: "center",
-              backdropFilter: "blur(10px)"
+              display: "flex", gap: "5px", alignItems: "center"
             }}>
               {[0, 1, 2].map(j => (
                 <motion.div key={j}
                   animate={{ y: [0, -5, 0] }}
                   transition={{ duration: 0.6, delay: j * 0.15, repeat: Infinity }}
-                  style={{
-                    width: "5px", height: "5px", borderRadius: "50%",
-                    background: "var(--cyan)"
-                  }}
+                  style={{ width: "5px", height: "5px", borderRadius: "50%", background: "var(--cyan)" }}
                 />
               ))}
             </div>
@@ -397,63 +542,83 @@ export default function ChatPanel() {
       </div>
 
       {/* Input */}
-      <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", background: "rgba(6,6,15,0.6)", backdropFilter: "blur(10px)" }}>
+      <div style={{
+        padding: "10px 12px", borderTop: "1px solid var(--border)",
+        background: "rgba(6,6,15,0.7)", backdropFilter: "blur(10px)", flexShrink: 0
+      }}>
         <motion.div
           animate={{
             borderColor: inputFocused ? "rgba(34,211,238,0.4)" : "var(--border-bright)",
-            boxShadow: inputFocused ? "0 0 0 3px rgba(34,211,238,0.08)" : "none"
+            boxShadow: inputFocused ? "0 0 0 3px rgba(34,211,238,0.05)" : "none"
           }}
           style={{
-            display: "flex", gap: "8px", alignItems: "center",
-            background: "rgba(15,15,30,0.9)",
-            border: "1px solid var(--border-bright)",
-            borderRadius: "12px", padding: "4px 4px 4px 14px",
-            backdropFilter: "blur(10px)"
+            display: "flex", gap: "5px", alignItems: "center",
+            background: "rgba(15,15,30,0.95)", border: "1px solid var(--border-bright)",
+            borderRadius: "11px", padding: "3px 3px 3px 12px"
           }}
         >
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && handleSend()}
+            onKeyDown={e => e.key === "Enter" && !e.shiftKey && handleSend()}
             onFocus={() => setInputFocused(true)}
             onBlur={() => setInputFocused(false)}
-            placeholder='Talk, give task, "generate image of...", "open PW"...'
+            placeholder='Chat or command... "generate image of...", "open PW"'
             style={{
               flex: 1, background: "transparent", border: "none",
-              color: "var(--text-primary)", fontSize: "13px",
+              color: "var(--text-primary)", fontSize: "12.5px",
               outline: "none", padding: "8px 0", fontFamily: "'Inter', sans-serif"
             }}
           />
-          <motion.button onClick={handleVoice}
-            whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }}
+
+          <motion.button onClick={() => { setMuted(m => !m); if (!muted) window.speechSynthesis.cancel(); }}
+            whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }} title={muted ? "Unmute" : "Mute AI voice"}
             style={{
-              width: "34px", height: "34px", borderRadius: "8px",
+              width: "31px", height: "31px", borderRadius: "7px",
+              background: muted ? "rgba(239,68,68,0.12)" : "rgba(255,255,255,0.05)",
+              border: `1px solid ${muted ? "#ef4444" : "var(--border)"}`,
+              color: muted ? "#ef4444" : "var(--text-muted)",
+              cursor: "pointer", fontSize: "12px",
+              display: "flex", alignItems: "center", justifyContent: "center"
+            }}
+          >{muted ? "🔇" : "🔊"}</motion.button>
+
+          <motion.button onClick={handleVoice}
+            whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }} title="Voice input"
+            style={{
+              width: "31px", height: "31px", borderRadius: "7px",
               background: listening ? "rgba(239,68,68,0.12)" : "rgba(255,255,255,0.05)",
               border: `1px solid ${listening ? "#ef4444" : "var(--border)"}`,
               color: listening ? "#ef4444" : "var(--text-muted)",
-              cursor: "pointer", fontSize: "14px",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              transition: "all 0.2s"
+              cursor: "pointer", fontSize: "12px",
+              display: "flex", alignItems: "center", justifyContent: "center"
             }}
           >{listening ? "🔴" : "🎤"}</motion.button>
-          <motion.button onClick={handleSend} disabled={loading}
+
+          <motion.button onClick={handleSend} disabled={loading || !input.trim()}
             whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
             style={{
-              padding: "8px 18px", borderRadius: "9px",
-              background: "linear-gradient(135deg, #0891b2, #7c3aed)",
+              padding: "7px 14px", borderRadius: "8px",
+              background: input.trim() && !loading
+                ? "linear-gradient(135deg, #0891b2, #7c3aed)"
+                : "rgba(255,255,255,0.06)",
               border: "none", color: "white", fontWeight: "700",
-              fontSize: "12px", cursor: "pointer",
+              fontSize: "11px", cursor: input.trim() && !loading ? "pointer" : "not-allowed",
               fontFamily: "'Inter', sans-serif",
-              boxShadow: "0 0 20px rgba(34,211,238,0.25)",
-              opacity: loading ? 0.5 : 1, transition: "opacity 0.2s"
+              boxShadow: input.trim() ? "0 0 14px rgba(34,211,238,0.2)" : "none",
+              opacity: loading ? 0.5 : 1, transition: "all 0.2s"
             }}
           >Send</motion.button>
         </motion.div>
+
         <div style={{
-          fontSize: "9px", color: "var(--text-muted)",
-          textAlign: "center", marginTop: "6px", fontWeight: "500"
+          display: "flex", justifyContent: "center", gap: "10px",
+          marginTop: "4px", fontSize: "8px", color: "var(--text-muted)"
         }}>
-          Enter · 🎤 voice · generate images · open sites · Groq + Llama 3.3
+          <span>🔊 mute</span><span>·</span>
+          <span>🎤 voice</span><span>·</span>
+          <span>Enter to send</span><span>·</span>
+          <span>Keys 1–9 switch panels</span>
         </div>
       </div>
     </div>
